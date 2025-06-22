@@ -6,36 +6,51 @@ import matplotlib.pyplot as plt
 from sklearn.linear_model import LinearRegression, Ridge
 from statsmodels.tsa.arima.model import ARIMA
 from prophet import Prophet
+import matplotlib.ticker as mticker
 import warnings
 warnings.filterwarnings("ignore")
 
-# Configuración de página
+# Configuración
 st.set_page_config(page_title="Proyección Asegurados", layout="centered")
 st.title("📈 Proyección de Asegurados - Guadalajara")
 
-# Selección de modelos
+# Modelos
 modelos_seleccionados = st.multiselect(
     "Selecciona modelos de pronóstico a mostrar:",
     ["Lineal", "Ridge", "ARIMA", "Prophet"],
     default=["Lineal", "Ridge", "ARIMA"]
 )
 
-# Cargar datos desde CSV (debe estar en el mismo directorio que este archivo)
+# Leer CSV (debe estar en el mismo directorio que app.py)
 df = pd.read_csv("guadalajara_asegurados.csv")
 df['fecha'] = pd.to_datetime(df['fecha'])
 df['año'] = df['fecha'].dt.year
 df_anual = df.groupby('año')['asegurados'].sum().reset_index()
 
+# Cálculo de incremento porcentual
+df_anual['crecimiento_%'] = df_anual['asegurados'].pct_change() * 100
+df_anual['crecimiento_%'] = df_anual['crecimiento_%'].fillna(0).round(2)
+
 X = df_anual[['año']]
 y = df_anual['asegurados']
 años_futuro = np.arange(df_anual['año'].max() + 1, df_anual['año'].max() + 7)
-
 resultados = pd.DataFrame({'Año': años_futuro})
 
-# Modelos y predicciones
+# Gráfico
 fig, ax = plt.subplots(figsize=(12, 6))
 ax.plot(df_anual['año'], y, marker='o', label='Histórico', color='black')
 
+# Etiquetas superiores: valores
+for i, (x, y_val) in enumerate(zip(df_anual['año'], df_anual['asegurados'])):
+    ax.text(x, y_val + max(y)*0.01, f"{int(y_val):,}", ha='center', va='bottom', fontsize=9)
+
+# Etiquetas inferiores: crecimiento
+for i, (x, growth) in enumerate(zip(df_anual['año'], df_anual['crecimiento_%'])):
+    color = 'green' if growth > 0 else ('red' if growth < 0 else 'gray')
+    ax.text(x, df_anual['asegurados'].iloc[i] - max(y)*0.05, f"{growth:.1f}%", 
+            ha='center', va='top', fontsize=9, color=color)
+
+# Modelos
 if "Lineal" in modelos_seleccionados:
     model = LinearRegression().fit(X, y)
     pred = model.predict(años_futuro.reshape(-1, 1))
@@ -66,25 +81,42 @@ if "Prophet" in modelos_seleccionados:
     ax.plot(años_futuro, pred, '--o', label='Prophet', color='purple')
     resultados["Prophet"] = pred
 
-# Etiquetas y leyenda
+# Estética
 ax.set_title("Proyección de asegurados (Guadalajara)")
 ax.set_xlabel("Año")
 ax.set_ylabel("Asegurados")
 ax.legend()
 ax.grid(True)
+ax.yaxis.set_major_formatter(mticker.FuncFormatter(lambda x, _: f'{int(x):,}'))
 
-# Mostrar gráfica
+# Mostrar gráfico
 st.pyplot(fig)
 
 # Mostrar tabla
 st.markdown("### 📋 Tabla de predicciones")
 st.dataframe(resultados.style.format(precision=0, thousands=","))
 
-# Descargar CSV
+# 📥 Descargar CSV
 csv = resultados.to_csv(index=False).encode('utf-8')
 st.download_button(
     label="⬇️ Descargar CSV con predicciones",
     data=csv,
     file_name='proyecciones_asegurados.csv',
     mime='text/csv'
+)
+
+# 📥 Descargar Excel
+import io
+from tempfile import NamedTemporaryFile
+import xlsxwriter
+
+output = io.BytesIO()
+with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
+    resultados.to_excel(writer, sheet_name='Predicciones', index=False)
+    writer.save()
+st.download_button(
+    label="⬇️ Descargar Excel con predicciones",
+    data=output.getvalue(),
+    file_name="proyecciones_asegurados.xlsx",
+    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
 )
